@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Star Drift</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0d1a; color: #e8ecff;
+    font-family: system-ui, sans-serif; overflow: hidden; touch-action: none; }
+  canvas { display: block; }
+  #hud { position: fixed; top: 12px; left: 16px; right: 16px; display: flex;
+    justify-content: space-between; font-size: 18px; pointer-events: none; }
+  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: rgba(11, 13, 26, .75); padding: 16px; }
+  #overlay h1 { font-size: 48px; margin: 0 0 8px; letter-spacing: 2px; }
+  #overlay p { margin: 6px 0; opacity: .85; max-width: 420px; }
+  #overlay button { margin-top: 18px; font-size: 20px; padding: 10px 28px;
+    border: 0; border-radius: 999px; background: #ffd25e; color: #1a1300; cursor: pointer; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><span id="score">Score 0</span><span id="best">Best 0</span></div>
+<div id="overlay">
+  <h1>STAR DRIFT</h1>
+  <p>Steer your comet with the mouse, a finger, or the arrow keys / WASD.</p>
+  <p>Collect yellow stars. Dodge the grey rocks. It gets faster as you go.</p>
+  <p id="final"></p>
+  <button id="play">Play</button>
+</div>
+<script>
+(() => {
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  const scoreEl = document.getElementById('score'), bestEl = document.getElementById('best');
+  const overlay = document.getElementById('overlay'), finalEl = document.getElementById('final');
+  let W, H;
+  function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
+  addEventListener('resize', resize); resize();
+
+  let best = 0;
+  try { best = +localStorage.getItem('starDriftBest') || 0; } catch (e) {}
+  bestEl.textContent = 'Best ' + best;
+
+  // Background parallax dust
+  const dust = Array.from({ length: 120 }, () => ({ x: Math.random(), y: Math.random(), z: Math.random() * .8 + .2 }));
+
+  const keys = {};
+  addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true;
+    if (e.key === ' ' || e.key === 'Enter') { if (!running) start(); } });
+  addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+  let target = null;
+  const setTarget = (x, y) => { target = { x, y }; };
+  cv.addEventListener('mousemove', e => setTarget(e.clientX, e.clientY));
+  cv.addEventListener('touchstart', e => { const t = e.touches[0]; setTarget(t.clientX, t.clientY); }, { passive: true });
+  cv.addEventListener('touchmove', e => { const t = e.touches[0]; setTarget(t.clientX, t.clientY); }, { passive: true });
+
+  let player, stars, rocks, sparks, score, time, running = false, spawnT, starT, last;
+
+  function start() {
+    player = { x: W / 2, y: H / 2, r: 12, trail: [] };
+    stars = []; rocks = []; sparks = []; score = 0; time = 0; spawnT = 0; starT = 0;
+    target = null; running = true; overlay.classList.add('hidden');
+    scoreEl.textContent = 'Score 0';
+    last = performance.now();
+    requestAnimationFrame(loop);
+  }
+
+  function edgeSpawn(speed) {
+    const side = Math.floor(Math.random() * 4);
+    let x, y;
+    if (side === 0) { x = -40; y = Math.random() * H; }
+    else if (side === 1) { x = W + 40; y = Math.random() * H; }
+    else if (side === 2) { x = Math.random() * W; y = -40; }
+    else { x = Math.random() * W; y = H + 40; }
+    // Aim roughly at the player with some spread
+    const a = Math.atan2(player.y - y, player.x - x) + (Math.random() - .5) * 0.9;
+    return { x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed };
+  }
+
+  function burst(x, y, color, n) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, s = Math.random() * 220 + 60;
+      sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: .6, color });
+    }
+  }
+
+  function gameOver() {
+    running = false;
+    burst(player.x, player.y, '#7fd4ff', 60);
+    if (score > best) { best = score; try { localStorage.setItem('starDriftBest', best); } catch (e) {} }
+    bestEl.textContent = 'Best ' + best;
+    finalEl.textContent = 'You scored ' + score + '.';
+    document.getElementById('play').textContent = 'Play again';
+    // Let the explosion play out briefly before showing the menu
+    const end = performance.now() + 700;
+    (function fade(now) {
+      update(Math.min(.05, (now - last) / 1000)); last = now; draw();
+      if (now < end) requestAnimationFrame(fade); else overlay.classList.remove('hidden');
+    })(performance.now());
+  }
+
+  function update(dt) {
+    for (const s of sparks) { s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= .96; s.vy *= .96; s.life -= dt; }
+    sparks = sparks.filter(s => s.life > 0);
+    for (const d of dust) { d.y += d.z * dt * 0.03; if (d.y > 1) d.y -= 1; }
+    if (!running) return;
+
+    time += dt;
+    const level = 1 + time / 20;
+
+    // Movement: keyboard takes priority, otherwise glide toward pointer
+    let dx = (keys['arrowright'] || keys['d'] ? 1 : 0) - (keys['arrowleft'] || keys['a'] ? 1 : 0);
+    let dy = (keys['arrowdown'] || keys['s'] ? 1 : 0) - (keys['arrowup'] || keys['w'] ? 1 : 0);
+    if (dx || dy) {
+      const m = Math.hypot(dx, dy); player.x += dx / m * 340 * dt; player.y += dy / m * 340 * dt; target = null;
+    } else if (target) {
+      player.x += (target.x - player.x) * Math.min(1, dt * 8);
+      player.y += (target.y - player.y) * Math.min(1, dt * 8);
+    }
+    player.x = Math.max(player.r, Math.min(W - player.r, player.x));
+    player.y = Math.max(player.r, Math.min(H - player.r, player.y));
+    player.trail.unshift({ x: player.x, y: player.y });
+    if (player.trail.length > 18) player.trail.pop();
+
+    // Spawning
+    spawnT -= dt;
+    if (spawnT <= 0) {
+      const r = edgeSpawn(90 + Math.random() * 60 * level);
+      r.size = 14 + Math.random() * 22; r.rot = Math.random() * 6; r.spin = (Math.random() - .5) * 2;
+      r.shape = Array.from({ length: 9 }, () => .75 + Math.random() * .35);
+      rocks.push(r);
+      spawnT = Math.max(.25, 1.1 / level);
+    }
+    starT -= dt;
+    if (starT <= 0 && stars.length < 4) {
+      stars.push({ x: 40 + Math.random() * (W - 80), y: 40 + Math.random() * (H - 80), t: 0 });
+      starT = 1.2;
+    }
+
+    for (const r of rocks) { r.x += r.vx * dt; r.y += r.vy * dt; r.rot += r.spin * dt; }
+    rocks = rocks.filter(r => r.x > -80 && r.x < W + 80 && r.y > -80 && r.y < H + 80);
+
+    for (const s of stars) s.t += dt;
+    stars = stars.filter(s => {
+      if (Math.hypot(s.x - player.x, s.y - player.y) < player.r + 14) {
+        score += 1; scoreEl.textContent = 'Score ' + score; burst(s.x, s.y, '#ffd25e', 16); return false;
+      }
+      return s.t < 8; // stars fade away if ignored
+    });
+
+    for (const r of rocks) {
+      if (Math.hypot(r.x - player.x, r.y - player.y) < r.size * .8 + player.r * .7) { gameOver(); return; }
+    }
+  }
+
+  function drawStar(x, y, R, rot) {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const rad = i % 2 ? R * .45 : R, a = rot + i * Math.PI / 5;
+      ctx.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad);
+    }
+    ctx.closePath(); ctx.fill();
+  }
+
+  function draw() {
+    ctx.fillStyle = '#0b0d1a'; ctx.fillRect(0, 0, W, H);
+    for (const d of dust) { ctx.fillStyle = `rgba(200,210,255,${d.z * .5})`; ctx.fillRect(d.x * W, d.y * H, d.z * 2, d.z * 2); }
+
+    for (const s of stars) {
+      const fade = s.t > 6 ? Math.max(0, (8 - s.t) / 2) : Math.min(1, s.t * 4);
+      ctx.globalAlpha = fade; ctx.fillStyle = '#ffd25e';
+      ctx.shadowColor = '#ffd25e'; ctx.shadowBlur = 16;
+      drawStar(s.x, s.y, 12 + Math.sin(s.t * 5) * 2, s.t);
+      ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    }
+
+    for (const r of rocks) {
+      ctx.save(); ctx.translate(r.x, r.y); ctx.rotate(r.rot);
+      ctx.fillStyle = '#6b6f80'; ctx.strokeStyle = '#9aa0b5'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      r.shape.forEach((k, i) => { const a = i / r.shape.length * Math.PI * 2; ctx.lineTo(Math.cos(a) * r.size * k, Math.sin(a) * r.size * k); });
+      ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+    }
+
+    if (running) {
+      player.trail.forEach((p, i) => {
+        const k = 1 - i / player.trail.length;
+        ctx.fillStyle = `rgba(127,212,255,${k * .5})`;
+        ctx.beginPath(); ctx.arc(p.x, p.y, player.r * k, 0, Math.PI * 2); ctx.fill();
+      });
+      ctx.fillStyle = '#e9f8ff'; ctx.shadowColor = '#7fd4ff'; ctx.shadowBlur = 20;
+      ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    for (const s of sparks) {
+      ctx.globalAlpha = Math.max(0, s.life / .6); ctx.fillStyle = s.color;
+      ctx.fillRect(s.x - 2, s.y - 2, 4, 4);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function loop(now) {
+    if (!running) return;
+    const dt = Math.min(.05, (now - last) / 1000); last = now;
+    update(dt); draw();
+    if (running) requestAnimationFrame(loop);
+  }
+
+  document.getElementById('play').addEventListener('click', start);
+  draw();
+})();
+</script>
+</body>
+</html>
