@@ -14,7 +14,7 @@ The repo root has a `Dockerfile` that serves `star-drift/` with nginx on port 80
 | Build Pack | **Dockerfile** |
 | Base Directory | `/` |
 | Dockerfile Location | `/Dockerfile` |
-| Ports Exposes | `80` |
+| Ports Exposes | `80` or `3000` (nginx listens on both) |
 | Domains | `https://<your domain>` |
 
 Then press **Redeploy** and watch the deployment log until it finishes.
