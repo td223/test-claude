@@ -5,9 +5,25 @@ There are two parts:
 1. **`star-drift/health.json`**: a tiny file the site serves at `/health.json`. Coolify checks it to tell whether the container is healthy.
 2. **`check_star_drift.py`**: a script that checks the live site from outside, so you know when it's unreachable for real visitors.
 
-## 1. Coolify health check
+## 1. Deploying on Coolify
 
-Deploy the commit that adds `health.json`, then in Coolify open your Star Drift application and go to **Configuration → Healthcheck**:
+The repo root has a `Dockerfile` that serves `star-drift/` with nginx on port 80. In Coolify, under the application's **Configuration → General**:
+
+| Setting | Value |
+|---|---|
+| Build Pack | **Dockerfile** |
+| Base Directory | `/` |
+| Dockerfile Location | `/Dockerfile` |
+| Ports Exposes | `80` |
+| Domains | `https://<your domain>` |
+
+Then press **Redeploy** and watch the deployment log until it finishes.
+
+The Dockerfile has its own health check, so Coolify will report the container as healthy without further setup.
+
+## Coolify health check settings (optional)
+
+If you'd rather set it in Coolify too, go to **Configuration → Healthcheck**:
 
 | Setting | Value |
 |---|---|
@@ -15,16 +31,14 @@ Deploy the commit that adds `health.json`, then in Coolify open your Star Drift 
 | Method | GET |
 | Scheme | http |
 | Host | localhost |
-| Port | the port your container listens on (usually `80` for a static site) |
+| Port | `80` |
 | Path | `/health.json` |
 | Return code | 200 |
 | Interval / Timeout / Retries | defaults are fine (e.g. 5s / 5s / 10) |
 
 Save and redeploy. The app should show **Running (healthy)**.
 
-Notes:
-- If Coolify's **Base Directory** is the repo root rather than `/star-drift`, the path is `/star-drift/health.json` instead.
-- Coolify runs the check *inside* the container with `curl` or `wget`. The nginx image Coolify uses for static sites has `wget`, so this works. If you use a custom image without either, the check will always fail.
+Coolify runs the check *inside* the container with `curl` or `wget`. The Dockerfile's nginx:alpine image has `wget`, so this works.
 
 ## 2. External monitor script
 
